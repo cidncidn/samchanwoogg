@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>최후의 성벽 — Last Bastion</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: 'Noto Serif KR', 'Malgun Gothic', serif; color: #d8d0c0; user-select: none; }
+  canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #hud.active { display: block; }
+
+  /* 조준 커서 — 마우스를 따라다님 (player.js가 left/top 갱신) */
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 22px; height: 22px; opacity: 0.9; pointer-events: none; z-index: 50;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: #ffd27a; box-shadow: 0 0 4px rgba(0,0,0,.8);
+  }
+  #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+  #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+  /* 전투 중에는 OS 커서 숨김(조준 크로스헤어로 대체), 오버레이에선 표시 */
+  #hud, canvas { cursor: none; }
+  .overlay, #shop, #info-panel, #skill-picker { cursor: auto; }
+  .wslot, .sslot { cursor: pointer; }
+  .sslot.empty .icon { color: #5a5446; }
+  /* 스킬 지정 픽커 */
+  #skill-picker {
+    position: fixed; z-index: 200; min-width: 200px; max-height: 50vh; overflow-y: auto;
+    background: rgba(14, 9, 5, .97); border: 1px solid #b06aff; border-radius: 4px; padding: 6px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.6);
+  }
+  #skill-picker .pk-head { color: #c9a55a; font-size: 12px; padding: 4px 6px 6px; border-bottom: 1px solid #4a3a28; margin-bottom: 4px; }
+  #skill-picker .pk-row {
+    display: block; width: 100%; text-align: left; background: none; border: none; color: #d8d0c0;
+    font-family: inherit; font-size: 13px; padding: 7px 8px; cursor: pointer; border-radius: 3px;
+  }
+  #skill-picker .pk-row em { font-style: normal; color: #8a7d68; font-size: 11px; margin-left: 6px; }
+  #skill-picker .pk-row:hover { background: rgba(160,90,255,.22); }
+  #skill-picker .pk-row.cur { color: #e0b8ff; }
+  #skill-picker .pk-clear { color: #9a7a6a; border-top: 1px solid #3a2e20; margin-top: 4px; }
+
+  /* 성문 내구도 — 상단 중앙 */
+  #castle-wrap {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    width: 420px; text-align: center;
+  }
+  #castle-wrap .label {
+    font-size: 13px; letter-spacing: 4px; color: #a89878; margin-bottom: 4px;
+    text-shadow: 0 0 6px #000;
+  }
+  .bar {
+    height: 16px; background: #1a120e; border: 1px solid #5a4632;
+    box-shadow: 0 0 8px rgba(0,0,0,.8) inset, 0 2px 6px rgba(0,0,0,.6);
+    position: relative; overflow: hidden;
+  }
+  .bar .fill { height: 100%; transition: width .25s ease; }
+  #castle-fill { background: linear-gradient(180deg, #8a6f3b, #6b531f); width: 100%; }
+  #castle-text {
+    position: absolute; inset: 0; font-size: 11px; line-height: 16px; color: #e8dcc0;
+    text-shadow: 0 1px 2px #000;
+  }
+
+  /* 디아블로식 HP/MP 오브 — 금속 링 + 유리 돔 + 액체 물결 */
+  .orb {
+    position: absolute; bottom: 14px; width: 118px; height: 118px; border-radius: 50%;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 36%, #15110b, #060403 72%);
+    box-shadow:
+      0 0 0 2px #090604, 0 0 0 5px #7a5c30, 0 0 0 6px #b8915a,
+      0 0 0 8px #2c2012, 0 6px 22px rgba(0,0,0,.85), inset 0 0 30px rgba(0,0,0,.92);
+  }
+  #hp-orb { left: 50%; transform: translateX(calc(-50% - 322px)); }
+  #mp-orb { left: 50%; transform: translateX(calc(-50% + 322px)); }
+  .orb-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 80%; transition: height .3s ease; }
+  .orb-fill::after {
+    content: ''; position: absolute; left: -25%; right: -25%; top: -7px; height: 14px;
+    background: radial-gradient(60% 100% at 50% 100%, rgba(255,255,255,.55), rgba(255,255,255,0) 72%);
+    animation: orbwave 3.4s ease-in-out infinite;
+  }
+  @keyframes orbwave { 0%,100% { transform: translateX(-6%); } 50% { transform: translateX(6%); } }
+  #hp-fill { background: radial-gradient(circle at 50% 125%, #ff8068, #c9241d 55%, #6c0f0f);
+    box-shadow: inset 0 8px 18px rgba(255,150,130,.45), inset 0 -10px 18px rgba(0,0,0,.55); }
+  #mp-fill { background: radial-gradient(circle at 50% 125%, #84c2ff, #2553c0 55%, #132a66);
+    box-shadow: inset 0 8px 18px rgba(160,205,255,.45), inset 0 -10px 18px rgba(0,0,0,.55); }
+  .orb-gloss {
+    position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+    background:
+      radial-gradient(circle at 38% 25%, rgba(255,255,255,.5), rgba(255,255,255,0) 38%),
+      radial-gradient(circle at 50% 55%, rgba(0,0,0,0) 58%, rgba(0,0,0,.55) 100%);
+  }
+  .orb-label {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #fff; font-weight: 700; letter-spacing: .5px;
+    text-shadow: 0 1px 3px #000, 0 0 7px rgba(0,0,0,.85); pointer-events: none;
+  }
+  /* XP 룬 골드 바 — HP/MP 오브 위, 얇게, HP 왼쪽~MP 오른쪽 폭(762px) */
+  #xp-strip {
+    position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%);
+    width: 762px; height: 7px; border-radius: 4px; overflow: hidden;
+    background: linear-gradient(180deg, #1a130b, #0a0604);
+    border: 1px solid #7a5c30; box-shadow: 0 2px 8px rgba(0,0,0,.7);
+  }
+  #xp-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+    background: linear-gradient(180deg, #ffe9a0, #d4a93f 52%, #8a6f1f);
+    box-shadow: 0 0 10px rgba(255,210,90,.6); transition: width .3s;
+  }
+  #pl-level {
+    position: absolute; bottom: 149px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; font-weight: 700; color: #fff4d0; white-space: nowrap;
+    text-shadow: 0 1px 2px #000; letter-spacing: 1px;
+  }
+
+  /* 웨이브 / 골드 — 우상단 */
+  #wave-info {
+    position: absolute; top: 16px; right: 24px; text-align: right;
+    font-size: 15px; text-shadow: 0 0 8px #000;
+  }
+  #wave-info .gold { color: #d9b44a; }
+  #wave-info .enemies { color: #b85c5c; font-size: 13px; }
+
+  /* 액션 바 — 하단 중앙 (위=숫자 0~9, 아래=영문 단축키) */
+  #action-bar {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 5px; z-index: 200; pointer-events: none;
+  }
+  #weapon-bar, #skill-bar { display: flex; gap: 4px; }
+  #edit-hint { font-size: 11px; color: #ffd44a; margin-top: 2px; display: none; text-shadow: 0 1px 2px #000; }
+  body.paused-edit #edit-hint { display: block; }
+  /* 보석 박힌 금속 슬롯 */
+  .wslot, .sslot {
+    width: 50px; height: 50px; position: relative; pointer-events: auto;
+    display: flex; align-items: center; justify-content: center; border-radius: 6px; color: #cdbb96;
+    border: 2px solid transparent;
+    background:
+      linear-gradient(180deg, rgba(46,34,20,.94), rgba(11,8,5,.96)) padding-box,
+      linear-gradient(155deg, #8a6630, #2a1d10 48%, #5e441f) border-box;
+    box-shadow: inset 0 1px 0 rgba(255,225,160,.14), inset 0 0 12px rgba(0,0,0,.66), 0 2px 7px rgba(0,0,0,.6);
+  }
+  .wslot::after, .sslot::after {
+    content: ''; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffe7a0, #9a6f2a); box-shadow: 0 0 4px rgba(255,200,90,.6);
+  }
+  .wslot.empty { opacity: .32; }
+  .wslot.empty::after { display: none; }
+  body.paused-edit .wslot, body.paused-edit .sslot { outline: 1px solid rgba(255,212,122,.55); outline-offset: 1px; }
+  .wslot .key, .sslot .key { position: absolute; top: 1px; left: 4px; font-size: 10px; font-weight: 700; color: #cda85a; text-shadow: 0 1px 1px #000; }
+  .wslot .icon, .sslot .icon { font-size: 24px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+  .wslot .icon svg, .sslot .icon svg { width: 28px; height: 28px; display: block; }
+  .wslot .ammo, .sslot .ammo { position: absolute; bottom: 1px; left: 0; right: 0; font-size: 9px; color: #e6d6a8; text-shadow: 0 1px 1px #000; }
+  .wslot.selected { box-shadow: inset 0 0 12px rgba(255,190,70,.3), 0 0 0 1px #ffd87a, 0 0 16px rgba(255,200,90,.55); }
+  .sslot.selected { box-shadow: inset 0 0 12px rgba(180,110,255,.3), 0 0 0 1px #d4a0ff, 0 0 16px rgba(160,90,255,.55); }
+  .wslot.locked, .sslot.locked { opacity: .4; }
+  .wslot.nores .ammo { color: #ff7a6a; }
+  .sslot .slv { position: absolute; top: 1px; right: 4px; font-size: 9px; color: #d4a93f; text-shadow: 0 1px 1px #000; }
+  .sslot.cooling { filter: grayscale(.5) brightness(.6); }
+  .sslot.charging { box-shadow: inset 0 0 12px rgba(255,200,70,.4), 0 0 16px rgba(255,180,60,.7); }
+
+  /* SVG 아이콘 (icons.js) — 원소별 틴트 */
+  .ic { display: inline-flex; vertical-align: middle; line-height: 0; }
+  .ic svg { width: 1.15em; height: 1.15em; vertical-align: -0.18em; }
+  .wslot .icon .ic svg, .sslot .icon .ic svg { width: 28px; height: 28px; }
+  .ic-fire { color: #ff7a3a; } .ic-ice { color: #7ec8ff; } .ic-lightning { color: #cdb8ff; }
+  .ic-poison { color: #9ad94a; } .ic-water { color: #4aa8ff; } .ic-wind { color: #aef0d6; }
+  .ic-earth { color: #d2a35a; } .ic-arcane { color: #c98aff; } .ic-holy { color: #ffe07a; }
+  .ic-curse { color: #b86adf; } .ic-none { color: #dcc9a0; }
+
+  /* 중앙 배너 */
+  #banner {
+    position: absolute; top: 28%; left: 50%; transform: translateX(-50%);
+    font-size: 34px; letter-spacing: 6px; color: #c9b896; text-align: center;
+    text-shadow: 0 0 18px rgba(160,30,30,.7), 0 2px 4px #000;
+    opacity: 0; transition: opacity .5s; white-space: nowrap;
+  }
+
+  /* 피격 비네트 */
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    box-shadow: inset 0 0 180px 60px rgba(140, 10, 10, 0.85);
+    transition: opacity .35s;
+  }
+  #lowhp {
+    position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    box-shadow: inset 0 0 220px 90px rgba(90, 0, 0, 0.9);
+  }
+  /* 미니맵/레이다 — 좌상단 (전방=위) */
+  #minimap {
+    position: absolute; top: 16px; left: 16px; width: 148px; height: 148px;
+    border-radius: 50%; box-shadow: 0 0 0 2px #14100a, 0 0 0 4px #7a5c30, 0 4px 14px rgba(0,0,0,.7);
+  }
+
+  /* 피격 방향 표시기 — 맞은 방향(화면 가장자리)에 붉은 호. JS가 rotate로 방향 지정 */
+  #hit-dir { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 6; }
+  #hit-dir::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 32%;
+    background: radial-gradient(ellipse 55% 100% at 50% 0%, rgba(230,40,30,.6), rgba(230,40,30,0) 72%);
+  }
+
+  /* ---------- 전체 화면 오버레이 공통 ---------- */
+  .overlay {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; background: rgba(5, 3, 2, 0.88); z-index: 10; text-align: center;
+  }
+  .overlay.active { display: flex; }
+  .overlay h1 {
+    font-size: 52px; letter-spacing: 10px; color: #b8a888; font-weight: 600;
+    text-shadow: 0 0 24px rgba(150, 20, 20, .8);
+  }
+  .overlay h2 { font-size: 30px; letter-spacing: 6px; color: #b85c5c; }
+  .overlay p { margin-top: 14px; font-size: 15px; color: #8a7d68; line-height: 1.9; }
+  .overlay .btn {
+    margin-top: 30px; padding: 12px 48px; font-size: 18px; letter-spacing: 4px;
+    background: #2a1a10; color: #d9c9a0; border: 1px solid #6a5232; cursor: pointer;
+    font-family: inherit; transition: all .2s;
+  }
+  .overlay .btn:hover { background: #4a2a18; box-shadow: 0 0 14px rgba(200, 150, 60, .4); }
+
+  /* ---------- 상점 ---------- */
+  #shop { background: rgba(8, 5, 3, 0.93); justify-content: flex-start; padding-top: 5vh; overflow-y: auto; }
+  #shop h2 { color: #c9a55a; }
+  #shop .gold-line { font-size: 18px; color: #d9b44a; margin-top: 8px; }
+  #shop-items {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 250px)); gap: 10px;
+    margin-top: 24px; max-width: 1100px; justify-content: center; padding: 0 20px;
+  }
+  .shop-item {
+    background: rgba(28, 18, 10, .85); border: 1px solid #4a3a28; padding: 12px 14px;
+    text-align: left; cursor: pointer; transition: all .15s; font-family: inherit; color: #d8d0c0;
+  }
+  .shop-item:hover:not(:disabled) { border-color: #c9a55a; background: rgba(48, 30, 14, .9); }
+  .shop-item:disabled { opacity: .38; cursor: default; }
+  .shop-item .name { font-size: 15px; color: #d9c9a0; }
+  .shop-item .price { float: right; color: #d9b44a; font-size: 14px; }
+  .shop-item .desc { font-size: 12px; color: #8a7d68; margin-top: 6px; line-height: 1.5; }
+  .shop-item .owned { font-size: 11px; color: #6a8a5a; margin-top: 4px; }
+  .shop-item .role { font-size: 11px; color: #b08a5a; margin-left: 6px; }
+  .shop-item.sel { border-color: #b06aff; background: rgba(40, 22, 52, .9); box-shadow: 0 0 10px rgba(160,90,255,.3); }
+  /* 직업 사범 섹션 헤더 */
+  .shop-sec { color: #c9a55a; font-size: 13px; letter-spacing: 1px; margin: 14px 2px 4px; border-bottom: 1px solid #4a3a28; padding-bottom: 4px; }
+  /* 레벨별 스킬트리 행 */
+  .skill-row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    background: rgba(24, 16, 10, .8); border: 1px solid #3a2e20; padding: 8px 10px;
+    text-align: left; cursor: pointer; transition: all .12s; font-family: inherit; color: #d8d0c0;
+  }
+  .skill-row .sk-ic { font-size: 20px; width: 26px; text-align: center; flex: none; }
+  .skill-row .sk-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .skill-row .sk-name { font-size: 13px; color: #d9c9a0; }
+  .skill-row .sk-name em { font-style: normal; font-size: 10px; color: #8a7d68; margin-left: 5px; }
+  .skill-row .sk-name b { color: #d98a4a; margin-left: 5px; font-weight: 600; }
+  .skill-row .sk-eff { font-size: 11px; color: #8a7d68; line-height: 1.4; }
+  .skill-row .sk-state { font-size: 11px; flex: none; color: #6a8a5a; }
+  .skill-row.ready { border-color: #6aa9d9; }
+  .skill-row.ready:hover { border-color: #9ad0ff; background: rgba(24, 40, 56, .9); }
+  .skill-row.learned { border-color: #4a6a3a; opacity: .92; }
+  .skill-row.learned .sk-state { color: #8fd96a; }
+  .skill-row.locked { opacity: .42; cursor: default; }
+  .skill-row.locked .sk-state { color: #9a5a5a; }
+  .skill-row.passive .sk-ic { color: #c9a55a; }
+  .skill-row.ult { border-color: #b06aff; }
+  .skill-row.ult .sk-name { color: #e0b8ff; }
+
+  /* 스킬 트리 (마인드맵형 — 좌측 척추선 + 노드) */
+  .skill-tree { position: relative; padding-left: 14px; margin-top: 2px; }
+  .skill-tree::before { content: ''; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px; background: #3a2e20; }
+  .sk-node {
+    position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
+    background: rgba(24, 16, 10, .8); border: 1px solid #3a2e20; border-radius: 4px;
+    padding: 7px 10px; margin: 5px 0; text-align: left; cursor: pointer; transition: all .12s;
+    font-family: inherit; color: #d8d0c0;
+  }
+  .sk-node .sk-dot { position: absolute; left: -14px; width: 14px; text-align: center; font-size: 11px; color: #6a5a44; background: #0a0704; }
+  .sk-node .sk-ic { font-size: 19px; width: 24px; text-align: center; flex: none; }
+  .sk-node .sk-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .sk-node .sk-name { font-size: 13px; color: #d9c9a0; }
+  .sk-node .sk-name em { font-style: normal; font-size: 10px; color: #8a7d68; margin-left: 5px; }
+  .sk-node .sk-name b { color: #d98a4a; margin-left: 5px; font-weight: 600; }
+  .sk-node .sk-name .nextbadge { font-style: normal; color: #ffd44a; font-size: 11px; margin-left: 6px; }
+  .sk-node .sk-eff { font-size: 11px; color: #8a7d68; line-height: 1.4; }
+  .sk-node .sk-state { font-size: 11px; flex: none; color: #6a8a5a; }
+  .sk-node.ready { border-color: #6aa9d9; }
+  .sk-node.ready:hover { border-color: #9ad0ff; background: rgba(24, 40, 56, .9); }
+  .sk-node.learned { border-color: #4a6a3a; opacity: .95; }
+  .sk-node.learned .sk-dot { color: #8fd96a; }
+  .sk-node.learned .sk-state { color: #8fd96a; }
+  .sk-node.locked { opacity: .5; cursor: default; }
+  .sk-node.locked .sk-state { color: #9a5a5a; }
+  .sk-node.passive .sk-ic { color: #c9a55a; }
+  .sk-node.ult { border-color: #b06aff; }
+  .sk-node.ult .sk-name { color: #e0b8ff; }
+  .sk-node.next { border-color: #ffd44a; box-shadow: 0 0 0 1px rgba(255,212,74,.4), 0 0 12px rgba(255,212,74,.25); }
+  .sk-node.next .sk-dot { color: #ffd44a; }
+
+  #help-text { font-size: 13px; color: #6a6052; margin-top: 18px; line-height: 2; }
+  kbd {
+    background: #2a2218; border: 1px solid #5a4a36; padding: 1px 6px; font-size: 11px;
+    border-radius: 3px; font-family: inherit;
+  }
+
+  /* 설정 창 */
+  #settings .settings-grid {
+    display: grid; grid-template-columns: 1fr; gap: 7px 14px; width: 340px;
+    text-align: left; margin: 8px 0 14px;
+  }
+  #settings .settings-grid label { font-size: 13px; color: #c9b896; display: flex; justify-content: space-between; }
+  #settings .settings-grid label b { color: #ffd44a; font-weight: 600; }
+  #settings .settings-grid input[type=range] { width: 100%; accent-color: #c9a55a; cursor: pointer; }
+  #settings .set-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 2px; }
+  #settings .set-toggle input { accent-color: #c9a55a; width: 16px; height: 16px; cursor: pointer; }
+
+  /* 데미지 숫자 팝업 */
+  #dmg-layer { position: absolute; inset: 0; overflow: hidden; }
+  .dmgnum {
+    position: absolute; font-size: 14px; font-weight: 600; color: #ffd44a;
+    text-shadow: 0 1px 3px #000; pointer-events: none; transform: translate(-50%, -50%);
+  }
+  .dmgnum.crit { color: #ff5533; font-size: 19px; }
+
+  /* (스킬 슬롯은 #action-bar > #skill-bar 내 .sslot으로 통합) */
+
+  /* 4방향 위협 카운터 (성문 게이지 아래) */
+  #dir-threat {
+    display: flex; justify-content: center; gap: 18px;
+    margin-top: 4px; font-size: 12px; text-shadow: 0 1px 2px #000;
+  }
+
+  #class-select { display: flex; gap: 14px; margin-top: 26px; }
+  .class-card {
+    width: 190px; padding: 16px 12px 14px; cursor: pointer; font-family: inherit;
+    background: rgba(22, 14, 8, .85); border: 1px solid #4a3a28; color: #d8d0c0;
+    transition: all .15s; text-align: center;
+  }
+  .class-card:hover { border-color: #8a6a3a; }
+  .class-card.selected { border-color: #c9a55a; background: rgba(48, 30, 14, .92); box-shadow: 0 0 14px rgba(201,165,90,.3); }
+  .class-card .ci { font-size: 30px; }
+  .class-card .cn { font-size: 18px; letter-spacing: 4px; color: #d9c9a0; margin-top: 6px; }
+  .class-card .cd { font-size: 11px; color: #8a7d68; margin-top: 8px; line-height: 1.7; }
+
+  /* 연속 처치 콤보 — 크로스헤어 우상단 */
+  #combo {
+    position: absolute; left: 58%; top: 38%; opacity: 0;
+    font-size: 30px; font-weight: 700; color: #ffcc44; letter-spacing: 1px;
+    text-shadow: 0 0 12px rgba(255,140,30,.7), 0 2px 4px #000; pointer-events: none;
+    transition: opacity .2s;
+  }
+
+  /* 정보 패널 (캐릭터/인벤토리/스킬) */
+  #info-panel {
+    position: fixed; top: 0; right: 0; width: 380px; height: 100%;
+    background: rgba(10, 7, 4, 0.95); border-left: 2px solid #5a4632;
+    box-shadow: -8px 0 30px rgba(0,0,0,.6); z-index: 8; display: none;
+    flex-direction: column; color: #d8d0c0;
+  }
+  #info-panel.active { display: flex; }
+  .ip-tabs {
+    display: flex; align-items: center; border-bottom: 1px solid #4a3a28;
+    background: rgba(30,20,12,.8);
+  }
+  .ip-tab {
+    padding: 14px 16px; font-size: 14px; letter-spacing: 2px; color: #8a7d68;
+    cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .ip-tab:hover { color: #c9b896; }
+  .ip-tab.sel { color: #ffd44a; border-bottom-color: #c9a55a; }
+  .ip-close { margin-left: auto; padding: 12px 16px; cursor: pointer; color: #8a7d68; font-size: 16px; }
+  .ip-close:hover { color: #d9c9a0; }
+  .ip-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+  .ip-body h3 {
+    font-size: 13px; letter-spacing: 3px; color: #c9a55a; margin: 16px 0 8px;
+    border-bottom: 1px solid #3a2e1e; padding-bottom: 4px;
+  }
+  .ip-body h3:first-child { margin-top: 0; }
+  .ip-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+  .ip-row .k { color: #9a8d78; }
+  .ip-row .v { color: #e8dcc0; }
+  .ip-note { font-size: 11px; color: #6a6052; line-height: 1.7; margin-top: 8px; }
+  /* 스탯 분배 */
+  .sp-pool { font-size: 11px; color: #6a8a5a; margin-left: 8px; }
+  .sp-pool.has { color: #ffd44a; }
+  .stat-row .v { display: inline-flex; align-items: center; gap: 6px; }
+  .stat-plus {
+    width: 18px; height: 18px; line-height: 1; padding: 0; border-radius: 3px;
+    border: 1px solid #c9a55a; background: rgba(60,42,16,.9); color: #ffd44a;
+    font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .stat-plus:hover { background: #c9a55a; color: #1a1208; }
+  .ip-pill {
+    display: inline-block; padding: 2px 8px; margin: 2px 3px 2px 0; font-size: 11px;
+    border: 1px solid #4a3a28; border-radius: 3px; background: rgba(40,28,14,.6);
+  }
+  .ip-pill.on { color: #d9c9a0; border-color: #8a6a3a; }
+  .ip-pill.off { color: #5a5042; }
+
+  #interact-hint {
+    position: fixed; bottom: 18%; left: 50%; transform: translateX(-50%);
+    padding: 8px 22px; background: rgba(15, 10, 6, .85); border: 1px solid #6a5232;
+    color: #d9c9a0; font-size: 15px; letter-spacing: 2px; display: none; z-index: 5;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="crosshair"></div>
+  <canvas id="minimap" width="148" height="148"></canvas>
+  <div id="castle-wrap">
+    <div class="label">성 문 내 구 도</div>
+    <div class="bar"><div class="fill" id="castle-fill"></div><div id="castle-text"></div></div>
+    <div id="dir-threat">
+      <span id="dt-n"></span><span id="dt-w"></span><span id="dt-e"></span><span id="dt-s"></span>
+    </div>
+  </div>
+  <div id="dmg-layer"></div>
+  <div id="wave-info">
+    <div id="wave-num">웨이브 —</div>
+    <div class="enemies" id="enemy-count"></div>
+    <div class="gold" id="gold-amount">0 G</div>
+  </div>
+  <!-- 디아블로식 하단 HUD: HP/MP 오브 + 액션바(위 숫자·아래 영문) + XP 스트립 -->
+  <div id="hp-orb" class="orb"><div class="orb-fill" id="hp-fill"></div><div class="orb-gloss"></div><div class="orb-label" id="hp-text"></div></div>
+  <div id="mp-orb" class="orb"><div class="orb-fill" id="mp-fill"></div><div class="orb-gloss"></div><div class="orb-label" id="mp-text"></div></div>
+  <div id="action-bar">
+    <div id="weapon-bar"></div>
+    <div id="skill-bar"></div>
+    <div id="edit-hint">ESC — 슬롯을 클릭해 무기·스킬 변경</div>
+  </div>
+  <div id="xp-strip"><div id="xp-fill"></div></div>
+  <span id="pl-level">Lv 1</span>
+  <div id="combo"></div>
+  <div id="banner"></div>
+  <div id="vignette"></div>
+  <div id="lowhp"></div>
+  <div id="hit-dir"></div>
+</div>
+
+<!-- 시작 메뉴 -->
+<div id="menu" class="overlay active">
+  <h1>최후의 성벽</h1>
+  <p>북쪽 어둠에서 놈들이 몰려온다.<br/>너는 이 이름 없는 변경 성채에 도착한 용병이다.<br/>성문이 부서지는 순간 — 모든 것이 끝난다.</p>
+  <div id="class-select">
+    <button class="class-card selected" data-class="archer">
+      <div class="ci">🏹</div><div class="cn">궁수</div>
+      <div class="cd">집중 · 민첩(DEX)<br/>세부직업 5종: 장궁·쇠뇌·마법궁수·속사궁·함정</div>
+    </button>
+    <button class="class-card" data-class="warrior">
+      <div class="ci">🗡</div><div class="cn">전사</div>
+      <div class="cd">분노 · 힘(STR)<br/>세부직업 5종: 검방·양손검·도끼·단도·창</div>
+    </button>
+    <button class="class-card" data-class="mage">
+      <div class="ci">🔥</div><div class="cn">마법사</div>
+      <div class="cd">마나 · 지능(INT)<br/>세부직업 8종: 불·얼음·번개·물·바람·땅·버프·저주</div>
+    </button>
+  </div>
+  <button class="btn" id="btn-start">전투 개시</button>
+  <div id="help-text">
+    <kbd>W A S D</kbd> 이동 · <kbd>Shift</kbd> 질주 · <kbd>마우스</kbd> 시점 회전 · 화면 가운데 조준 · <kbd>좌클릭</kbd> 공격 · <kbd>ESC</kbd> 일시정지<br/>
+    <kbd>1</kbd><kbd>2</kbd> 무기 · <kbd>Q E R T</kbd> 스킬 슬롯(지정은 일시정지/스킬창에서 우클릭) · <kbd>G</kbd> 성 내부 시설 · <kbd>F</kbd> 출성(밧줄)<br/>
+    <kbd>Space</kbd> 점프 · 성벽 가장자리에서 걸어가거나 점프하면 안마당으로 낙하(높으면 HP 절반 손실) · 계단은 안전<br/>
+    <kbd>C</kbd> 캐릭터 · <kbd>I</kbd> 인벤토리 · <kbd>K</kbd> 스킬창 · <kbd>Space</kbd> 점프 · <kbd>ESC</kbd> 일시정지
+  </div>
+</div>
+
+<!-- 일시정지 -->
+<div id="pause" class="overlay">
+  <h2>전 투 중 단</h2>
+  <button class="btn" id="btn-resume">전장으로 복귀</button>
+  <button class="btn" id="btn-ally">AI 동료 소환</button>
+  <button class="btn" id="btn-settings">⚙ 설정</button>
+  <p style="font-size:12px;color:#6a8aaa;margin-top:6px;">동료는 성벽을 순회하며 위협이 큰 방향을 함께 막는다</p>
+  <!-- 개발용 임시 버튼 — 정식 빌드에서 제거 예정 (영구 사망 콘셉트) -->
+  <button class="btn" id="btn-restart" onclick="location.reload()">처음부터 다시 시작</button>
+</div>
+
+<!-- 설정 -->
+<div id="settings" class="overlay">
+  <h2>설 정</h2>
+  <div class="settings-grid">
+    <label>마우스 감도 <b id="set-sens-v"></b></label>
+    <input type="range" id="set-sens" min="40" max="260" value="100">
+    <label>마스터 볼륨 <b id="set-master-v"></b></label>
+    <input type="range" id="set-master" min="0" max="100" value="100">
+    <label>효과음 (SFX) <b id="set-sfx-v"></b></label>
+    <input type="range" id="set-sfx" min="0" max="100" value="100">
+    <label>배경음 (Ambient) <b id="set-amb-v"></b></label>
+    <input type="range" id="set-amb" min="0" max="100" value="100">
+    <label>시야 거리 <b id="set-view-v"></b></label>
+    <input type="range" id="set-view" min="0" max="100" value="100">
+    <label class="set-toggle"><input type="checkbox" id="set-bloom" checked> 블룸 (발광 효과)</label>
+    <label class="set-toggle"><input type="checkbox" id="set-shadow" checked> 그림자</label>
+  </div>
+  <button class="btn" id="btn-settings-close">닫기</button>
+</div>
+
+<!-- 상점 (실시간 보급 / 웨이브 사이 학습 겸용) -->
+<div id="shop" class="overlay">
+  <h2 id="shop-title">보 급 상 인</h2>
+  <p id="shop-line">"살아남았군, 용병. 금화가 있다면… 거래하지."</p>
+  <div class="gold-line">보유: <span id="shop-gold">0</span> G</div>
+  <div id="shop-items"></div>
+  <button class="btn" id="btn-next-wave">다음 웨이브 개시</button>
+  <button class="btn" id="btn-close-shop" style="display:none">전장 복귀 (G)</button>
+</div>
+
+<!-- 상호작용 힌트 -->
+<div id="interact-hint">[G] 보급 상인</div>
+
+<!-- 정보 패널 (C 캐릭터 / I 인벤토리 / K 스킬) — 전투는 계속 진행 -->
+<div id="info-panel">
+  <div class="ip-tabs">
+    <span class="ip-tab" data-panel="char">캐릭터 [C]</span>
+    <span class="ip-tab" data-panel="inv">인벤토리 [I]</span>
+    <span class="ip-tab" data-panel="skill">스킬 [K]</span>
+    <span class="ip-close" id="ip-close">✕</span>
+  </div>
+  <div class="ip-body" id="ip-body"></div>
+</div>
+
+<!-- 게임 오버 -->
+<div id="gameover" class="overlay">
+  <h2 id="go-title">성이 함락되었다</h2>
+  <p id="go-stats"></p>
+  <p style="color:#6a6052; font-size:13px;">쓰러진 용병의 기록은 사라진다. 새로운 용병은 다른 성에서 다시 시작해야 하리라.</p>
+  <button class="btn" onclick="location.reload()">새로운 용병으로 시작</button>
+</div>
+
+<!-- 승리 -->
+<div id="victory" class="overlay">
+  <h2 style="color:#c9a55a">여명이 밝았다</h2>
+  <p id="vic-stats"></p>
+  <p>10번의 웨이브를 버텨냈다. 그러나 어둠은 결코 완전히 물러나지 않는다…</p>
+  <button class="btn" id="btn-endless">무한 모드 계속</button>
+  <button class="btn" onclick="location.reload()">처음부터 다시</button>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
